@@ -1,0 +1,122 @@
+#include <Servo.h>
+#include <SPI.h>
+#include <RF24.h>
+
+
+#define CE_PIN 9
+#define CSN_PIN 10
+#define SCK_PIN 12
+#define MISO_PIN 13
+#define MOSI_PIN 11
+
+
+#define MOTOR_ENA 16
+#define MOTOR_IN1 17
+#define MOTOR_IN2 18
+
+
+static const int servoPin = 5;
+
+
+RF24 radio(CE_PIN, CSN_PIN);
+uint8_t address[][6] = { "NODE1", "NODE2" };
+Servo servo1;
+
+
+struct Payload {
+  int steer;
+  int speed;
+  int dir;
+  int gear;
+  int pedal;
+};
+
+
+Payload rxData;
+
+
+void setup() {
+  Serial.begin(115200);
+
+
+  pinMode(MOTOR_ENA, OUTPUT);
+  pinMode(MOTOR_IN1, OUTPUT);
+  pinMode(MOTOR_IN2, OUTPUT);
+
+
+  servo1.attach(servoPin);
+
+
+  SPI.begin(SCK_PIN, MISO_PIN, MOSI_PIN, CSN_PIN);
+
+
+  if (!radio.begin()) {
+    Serial.println("NRF24 NOT found!");
+    while (1);
+  }
+
+
+  radio.setDataRate(RF24_250KBPS);
+  radio.setChannel(76);
+  radio.setAutoAck(true);
+  radio.setPayloadSize(sizeof(Payload));
+
+
+  radio.openReadingPipe(1, address[1]);
+  radio.startListening();
+
+
+  Serial.println("✅ Receiver Ready");
+}
+
+
+void loop() {
+  if (radio.available()) {
+    radio.read(&rxData, sizeof(rxData));
+
+
+    // =========================
+    // SERVO (STEERING)
+    // =========================
+    if (rxData.steer >= 0 && rxData.steer <= 180) {
+      servo1.write(rxData.steer);
+    }
+
+
+    // =========================
+    // MOTOR CONTROL USING GEAR
+    // =========================
+    int pwm = map(rxData.pedal, 0, 100, 0, 255);
+
+
+    if (rxData.gear > 0) {
+      // FORWARD
+      digitalWrite(MOTOR_IN1, HIGH);
+      digitalWrite(MOTOR_IN2, LOW);
+      analogWrite(MOTOR_ENA, pwm);
+
+
+    } else if (rxData.gear == -1) {
+      // REVERSE
+      digitalWrite(MOTOR_IN1, LOW);
+      digitalWrite(MOTOR_IN2, HIGH);
+      analogWrite(MOTOR_ENA, pwm);
+
+
+    } else {
+      // NEUTRAL / STOP
+      digitalWrite(MOTOR_IN1, LOW);
+      digitalWrite(MOTOR_IN2, LOW);
+      analogWrite(MOTOR_ENA, 0);
+    }
+
+
+    // =========================
+    // DEBUG OUTPUT
+    // =========================
+    Serial.print("Steer: "); Serial.print(rxData.steer);
+    Serial.print(" | Gear: "); Serial.print(rxData.gear);
+    Serial.print(" | Pedal: "); Serial.print(rxData.pedal);
+    Serial.print(" | PWM: "); Serial.println(pwm);
+  }
+}
