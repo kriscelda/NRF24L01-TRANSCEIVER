@@ -2,20 +2,19 @@
 #include <SPI.h>
 #include <RF24.h>
 
-
 #define CE_PIN 9
 #define CSN_PIN 10
 #define SCK_PIN 12
 #define MISO_PIN 13
 #define MOSI_PIN 11
 
-
 #define MOTOR_ENA 16
 #define MOTOR_IN1 17
 #define MOTOR_IN2 18
-
+#define LED_PIN 14
 
 static const int servoPin = 5;
+const int frequency = 200;  // Hz
 
 
 RF24 radio(CE_PIN, CSN_PIN);
@@ -27,7 +26,7 @@ struct Payload {
   int steer;
   int speed;
   int dir;
-  int gear;
+  bool button;
 };
 
 
@@ -36,86 +35,65 @@ Payload rxData;
 
 void setup() {
   Serial.begin(115200);
-
-
   pinMode(MOTOR_ENA, OUTPUT);
   pinMode(MOTOR_IN1, OUTPUT);
   pinMode(MOTOR_IN2, OUTPUT);
+  pinMode(LED_PIN, OUTPUT);  // change
+  servo1.attach(
+    servoPin,
+    Servo::CHANNEL_NOT_ATTACHED,
+    Servo::DEFAULT_MIN_ANGLE,
+    Servo::DEFAULT_MAX_ANGLE,
+    Servo::DEFAULT_MIN_PULSE_WIDTH_US,
+    Servo::DEFAULT_MAX_PULSE_WIDTH_US,
+    frequency);
 
-
-  servo1.attach(servoPin);
-
-
+  // Explicitly tell the S3 which pins to use for SPI
   SPI.begin(SCK_PIN, MISO_PIN, MOSI_PIN, CSN_PIN);
 
 
   if (!radio.begin()) {
-    Serial.println("NRF24 NOT found!");
-    while (1);
+    Serial.println("NRF24 Hardware NOT found!");
+    while (1)
+      ;  // Halt if hardware is missing
   }
 
+  Serial.println("Radio Started");
 
   radio.setDataRate(RF24_250KBPS);
   radio.setChannel(76);
-  radio.setAutoAck(true);
-  radio.setPayloadSize(sizeof(Payload));
-
-
   radio.openReadingPipe(1, address[1]);
+
   radio.startListening();
-
-
-  Serial.println("✅ Receiver Ready");
+  Serial.println("Receiver Ready - Awaiting Servo Data...");
 }
-
 
 void loop() {
   if (radio.available()) {
     radio.read(&rxData, sizeof(rxData));
 
-
-    // =========================
-    // SERVO (STEERING)
-    // =========================
+    // Constraints check to keep servo safe
     if (rxData.steer >= 0 && rxData.steer <= 180) {
       servo1.write(rxData.steer);
+      Serial.print("Moving Servo to: ");
+      Serial.println(rxData.steer);
     }
 
-
-    // =========================
-    // MOTOR CONTROL USING GEAR
-    // =========================
-    int pwm = map(rxData.pedal, 0, 100, 0, 255);
-
-
-    if (rxData.gear > 0) {
-      // FORWARD
+    if (rxData.dir == 1) {  // Forward
       digitalWrite(MOTOR_IN1, HIGH);
       digitalWrite(MOTOR_IN2, LOW);
-      analogWrite(MOTOR_ENA, pwm);
-
-
-    } else if (rxData.gear == -1) {
-      // REVERSE
+      analogWrite(MOTOR_ENA, rxData.speed);
+    } else if (rxData.dir == 2) {  // Backward
       digitalWrite(MOTOR_IN1, LOW);
       digitalWrite(MOTOR_IN2, HIGH);
-      analogWrite(MOTOR_ENA, pwm);
-
-
+      analogWrite(MOTOR_ENA, rxData.speed);
     } else {
-      // NEUTRAL / STOP
       digitalWrite(MOTOR_IN1, LOW);
       digitalWrite(MOTOR_IN2, LOW);
       analogWrite(MOTOR_ENA, 0);
     }
 
-
-    // =========================
-    // DEBUG OUTPUT
-    // =========================
-    Serial.print("Steer: "); Serial.print(rxData.steer);
-    Serial.print(" | Gear: "); Serial.print(rxData.gear);
-    Serial.print(" | Pedal: "); Serial.print(rxData.pedal);
-    Serial.print(" | PWM: "); Serial.println(pwm);
+    digitalWrite(LED_PIN, rxData.button);
+    delay(10);
   }
 }
