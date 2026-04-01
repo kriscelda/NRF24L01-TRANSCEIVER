@@ -28,7 +28,6 @@ struct Payload {
   int speed;
   int dir;
   int gear;
-  int pedal;
 };
 
 
